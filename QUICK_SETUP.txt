@@ -1,0 +1,126 @@
+═══════════════════════════════════════════════════════════════
+    OFFICE CHECKLIST MANAGER - QUICK SETUP REFERENCE
+═══════════════════════════════════════════════════════════════
+
+📋 WHAT'S NEW?
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✅ AUTOMATIC Google Sheets sync on EVERY submission
+✅ NO MANUAL sync button needed anymore
+✅ Complete audit trail for monthly reports
+✅ Two organized sheets: Summary + Task Details
+
+
+🚀 5-MINUTE SETUP
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+STEP 1: Create Google Sheet
+   → Go to: sheets.google.com
+   → Click: Blank spreadsheet
+   → Copy Sheet ID from URL
+
+STEP 2: Setup Apps Script
+   → Extensions → Apps Script
+   → Copy code from: google-apps-script.js
+   → Paste and Save
+
+STEP 3: Deploy
+   → Deploy → New deployment
+   → Type: Web app
+   → Execute as: Me
+   → Who has access: Anyone
+   → Copy Web App URL
+
+STEP 4: Configure App
+   → Open index.html
+   → Click: ⚙️ Setup Google Sheets Sync
+   → Enter: Sheet ID and Web App URL
+   → Save
+
+
+📊 WHAT GETS SAVED?
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+SUMMARY SHEET:
+  • Date, Time, User, Role
+  • Checklist Type (Opening/Closing)
+  • Completion percentage (color-coded)
+  • Supervisor verification status
+
+TASK DETAILS SHEET:
+  • Every individual task
+  • Done/Not Done status (color-coded)
+  • Remarks added by user
+  • Timestamps
+  • Supervisor comments
+
+
+🎯 HOW TO USE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. Login with password: demo123
+2. Complete Opening or Closing checklist
+3. Submit → Data automatically syncs to Sheets
+4. Check Google Sheet to see your data
+5. Use filters for monthly reports
+
+
+📈 MONTHLY REPORTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+METHOD 1: Simple Filter
+   → Click any column header
+   → Filter icon
+   → Select date range
+
+METHOD 2: Pivot Table
+   → Insert → Pivot table
+   → Group by User, Date, Type
+   → Analyze performance
+
+METHOD 3: Charts
+   → Insert → Chart
+   → Select data range
+   → Choose chart type
+
+
+🔧 TROUBLESHOOTING
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+❌ Data not syncing?
+   → Press F12 (browser console)
+   → Check for error messages
+   → Verify Web App URL is correct
+   → Note: Data still saved locally
+
+❌ Permission error?
+   → Re-authorize Apps Script
+   → Check "Who has access: Anyone"
+
+❌ Script not working?
+   → Make sure you copied ENTIRE script
+   → Try re-deploying with new version
+
+
+💡 PRO TIPS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✓ Share Sheet with managers (View only)
+✓ Create monthly backup copies
+✓ Set up conditional formatting for alerts
+✓ Use Google Sheets mobile app for access
+✓ Export to Excel for offline analysis
+
+
+📞 NEED HELP?
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Read: GOOGLE_SHEETS_SETUP.md (detailed guide)
+Read: README.md (full documentation)
+Check: Browser console (F12) for errors
+Check: Apps Script execution log
+
+
+═══════════════════════════════════════════════════════════════
+   Your data is now permanently stored in Google Sheets! 🎉
+═══════════════════════════════════════════════════════════════
+

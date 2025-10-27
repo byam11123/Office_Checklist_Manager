@@ -32,11 +32,12 @@ let appState = {
   checklistType: "opening",
 };
 
+
 // PERMANENT GOOGLE SHEETS CONFIGURATION
 // These credentials are hardcoded and auto-configured on app load
 const GOOGLE_SHEETS_CONFIG = {
   sheetId: "15OgjRm14ywCmJVzrGrMxn8xagUU4SLrEOcTB55smkes",
-  scriptUrl: "https://script.google.com/macros/s/AKfycbyThCqj8-YAjBn3Ed1YIrwnM0IxNyeszx4cAgGr-FLu_CaruRU2DyCRsp05qke6EwG_7g/exec"
+  scriptUrl: "https://script.google.com/macros/s/AKfycbxsdiPSiG1t5N053LDebEt8ds5im58hHMRyJt6H7kvm0gEYCFqelp2GLOYbjwiM-6TE3w/exec"
 };
 
 // Initialize Google Sheets config on app load

@@ -3,11 +3,15 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Office Checklist Manager - Complete</title>
+    <title>Barbrik Projects Limited — Office Checklist Manager</title>
     <link rel="stylesheet" href="src/style.css" />
   </head>
   <body>
     <div class="container">
+      <div class="brand-header">
+        <img src="/company-logo.png" alt="Barbrik Projects Limited" class="brand-logo" onerror="this.style.display='none'" />
+        <div class="brand-title">BARBRIK PROJECTS LIMITED</div>
+      </div>
       <div class="card">
         <!-- LOGIN VIEW -->
         <div id="loginView" class="view active">
@@ -190,25 +194,27 @@
             </div>
           </div>
 
-          <table class="history-table">
-            <thead>
-              <tr>
-                <th>Date</th>
-                <th>Time</th>
-                <th>User</th>
-                <th>Type</th>
-                <th>Completed</th>
-                <th>Action</th>
-              </tr>
-            </thead>
-            <tbody id="historyTableBody">
-              <tr>
-                <td colspan="6" style="text-align: center; color: #999">
-                  No records found
-                </td>
-              </tr>
-            </tbody>
-          </table>
+          <div class="history-table-container">
+            <table class="history-table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Time</th>
+                  <th>User</th>
+                  <th>Type</th>
+                  <th>Completed</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="historyTableBody">
+                <tr>
+                  <td colspan="6" style="text-align: center; color: #999">
+                    No records found
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
 
         <!-- VERIFICATION VIEW -->

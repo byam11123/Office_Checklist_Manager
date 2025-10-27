@@ -27,7 +27,8 @@ function doPost(e) {
     setupDetailsHeaders(detailsSheet);
     
     if (data.isVerification) {
-      // Update existing rows instead of appending new onesn      var updated = false;
+      // Update existing rows instead of appending new ones
+      var updated = false;
       try {
         updated = updateSummaryVerification(summarySheet, data);
         updateDetailsVerification(detailsSheet, data);

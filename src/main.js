@@ -40,6 +40,11 @@ const GOOGLE_SHEETS_CONFIG = {
   scriptUrl: "https://script.google.com/macros/s/AKfycbxsdiPSiG1t5N053LDebEt8ds5im58hHMRyJt6H7kvm0gEYCFqelp2GLOYbjwiM-6TE3w/exec"
 };
 
+// SESSION PERSISTENCE
+const SESSION_KEY = "ocm_session";
+const INACTIVITY_LIMIT_MS = 10 * 60 * 1000; // 10 minutes
+let lastActivityAt = Date.now();
+
 // Initialize Google Sheets config on app load
 (function initializeGoogleSheets() {
   localStorage.setItem("googleSheetId", GOOGLE_SHEETS_CONFIG.sheetId);
@@ -70,7 +75,7 @@ function handleLogin(event) {
 
   if (!isValid) return;
 
-  if (password === "demo123") {
+  if (password === "12345") {
     appState.user = username;
     appState.role = role;
     appState.loginTime = new Date();
@@ -79,6 +84,10 @@ function handleLogin(event) {
       document.getElementById("supervisorCard").style.display = "block";
     }
 
+    // Persist session
+    persistSession();
+    updateActivity();
+
     showView("dashboardView");
     document.getElementById("dashboardUserName").textContent = username;
     document.getElementById("dashboardUserRole").textContent =
@@ -86,7 +95,7 @@ function handleLogin(event) {
     document.getElementById("dashboardLoginTime").textContent =
       "Logged in: " + formatTime(appState.loginTime);
   } else {
-    showError("loginError", "Invalid password. Try: demo123");
+    showError("loginError", "Invalid password. Try: 12345");
   }
 }
 
@@ -588,6 +597,7 @@ function showView(viewId) {
     .querySelectorAll(".view")
     .forEach((v) => v.classList.remove("active"));
   document.getElementById(viewId).classList.add("active");
+  updateLastView(viewId);
 }
 
 function backToDashboard() {
@@ -601,6 +611,7 @@ function logout() {
     loginTime: null,
     checklistType: "opening",
   };
+  localStorage.removeItem(SESSION_KEY);
   document.getElementById("supervisorCard").style.display = "none";
   document.getElementById("loginForm").reset();
   showView("loginView");
@@ -661,3 +672,130 @@ Object.assign(window, {
   exportToCSV,
   logout,
 });
+
+// ---------- Session helpers ----------
+function persistSession() {
+  const session = {
+    user: appState.user,
+    role: appState.role,
+    loginAt: new Date().toISOString(),
+    lastActiveAt: Date.now(),
+    lastView: "dashboardView",
+    checklistType: appState.checklistType,
+  };
+  localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+}
+
+function updateLastView(viewId) {
+  const raw = localStorage.getItem(SESSION_KEY);
+  if (!raw) return;
+  try {
+    const s = JSON.parse(raw);
+    s.lastView = viewId;
+    if (viewId === "checklistView") s.checklistType = appState.checklistType;
+    localStorage.setItem(SESSION_KEY, JSON.stringify(s));
+    // Also reflect in URL hash to survive reloads reliably
+    const hash = `view=${viewId}` + (viewId === "checklistView" ? `&type=${appState.checklistType}` : "");
+    if (location.hash !== `#${hash}`) location.replace(`#${hash}`);
+  } catch (_) {}
+}
+
+function restoreSession() {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    if (!raw) return; 
+    const session = JSON.parse(raw);
+    const expired = Date.now() - (session.lastActiveAt || 0) > INACTIVITY_LIMIT_MS;
+    if (expired) { localStorage.removeItem(SESSION_KEY); return; }
+
+    appState.user = session.user;
+    appState.role = session.role;
+    appState.loginTime = new Date(session.loginAt || Date.now());
+
+    if (appState.role === "supervisor") {
+      const supCard = document.getElementById("supervisorCard");
+      if (supCard) supCard.style.display = "block";
+    }
+    document.getElementById("dashboardUserName").textContent = appState.user;
+    document.getElementById("dashboardUserRole").textContent =
+      appState.role === "officeboy" ? "Office Boy" : "Supervisor";
+    document.getElementById("dashboardLoginTime").textContent =
+      "Logged in: " + formatTime(appState.loginTime);
+
+    const hashState = getHashState();
+    const lastView = hashState.view || session.lastView || "dashboardView";
+    const type = hashState.type || session.checklistType || "opening";
+
+    // Restore to the last view the user was on
+    if (lastView === "checklistView") {
+      startChecklist(type === "closing" ? "closing" : "opening");
+    } else if (lastView === "historyView") {
+      showHistoryView();
+    } else if (lastView === "verifyView" && appState.role === "supervisor") {
+      showVerifyView();
+    } else {
+      showView("dashboardView");
+    }
+
+    lastActivityAt = session.lastActiveAt || Date.now();
+  } catch (_) {}
+}
+
+function getHashState() {
+  if (!location.hash) return {};
+  try {
+    const q = new URLSearchParams(location.hash.slice(1));
+    const view = q.get("view") || undefined;
+    const type = q.get("type") || undefined;
+    return { view, type };
+  } catch (_) { return {}; }
+}
+
+function updateActivity() {
+  lastActivityAt = Date.now();
+  const raw = localStorage.getItem(SESSION_KEY);
+  if (!raw) return;
+  try {
+    const s = JSON.parse(raw);
+    s.lastActiveAt = lastActivityAt;
+    localStorage.setItem(SESSION_KEY, JSON.stringify(s));
+  } catch (_) {}
+}
+
+function attachActivityListeners() {
+  const handler = throttle(updateActivity, 30000); // write at most every 30s
+  ["click","keydown","mousemove","touchstart","scroll"].forEach(evt => {
+    window.addEventListener(evt, handler, { passive: true });
+  });
+  setInterval(() => {
+    const raw = localStorage.getItem(SESSION_KEY);
+    if (!raw) return;
+    try {
+      const s = JSON.parse(raw);
+      if (Date.now() - (s.lastActiveAt || 0) > INACTIVITY_LIMIT_MS) {
+        logout();
+      }
+    } catch (_) {}
+  }, 30000);
+}
+
+function throttle(fn, interval) {
+  let last = 0; let timer = null;
+  return function() {
+    const now = Date.now();
+    if (now - last >= interval) { last = now; fn(); }
+    else if (!timer) {
+      timer = setTimeout(() => { last = Date.now(); timer = null; fn(); }, interval - (now - last));
+    }
+  };
+}
+
+// Boot after DOM is ready
+(function boot() {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => { restoreSession(); attachActivityListeners(); });
+  } else {
+    restoreSession();
+    attachActivityListeners();
+  }
+})();

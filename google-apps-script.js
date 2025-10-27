@@ -26,11 +26,21 @@ function doPost(e) {
     setupSummaryHeaders(summarySheet);
     setupDetailsHeaders(detailsSheet);
     
-    // Add summary row
-    addSummaryRow(summarySheet, data);
-    
-    // Add detailed task rows
-    addDetailedRows(detailsSheet, data);
+    if (data.isVerification) {
+      // Update existing rows instead of appending new onesn      var updated = false;
+      try {
+        updated = updateSummaryVerification(summarySheet, data);
+        updateDetailsVerification(detailsSheet, data);
+      } catch (updateErr) {
+        // If anything goes wrong, fall back to append to avoid data loss
+        addSummaryRow(summarySheet, data);
+        addDetailedRows(detailsSheet, data);
+      }
+    } else {
+      // First-time submission: append rows
+      addSummaryRow(summarySheet, data);
+      addDetailedRows(detailsSheet, data);
+    }
     
     lock.releaseLock();
     
@@ -188,6 +198,51 @@ function addDetailedRows(sheet, data) {
   
   // Auto-resize columns
   sheet.autoResizeColumns(1, 10);
+}
+
+// Update supervisor verification in Summary sheet (columns 10-12) for an existing submission
+function updateSummaryVerification(sheet, data) {
+  var submittedAtCol = 2; // "Submitted At"
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return false; // only header present
+  var range = sheet.getRange(2, submittedAtCol, lastRow - 1, 1);
+  var values = range.getValues();
+  for (var i = 0; i < values.length; i++) {
+    if (values[i][0] === data.submittedAt) {
+      var rowIndex = i + 2; // account for header row
+      sheet.getRange(rowIndex, 10, 1, 3).setValues([[
+        data.supervisorReview ? "Yes" : "No",
+        data.supervisor || "-",
+        data.verifiedAt || "-"
+      ]]);
+      return true;
+    }
+  }
+  return false;
+}
+
+// Update supervisor verification columns (9-10) in Task Details for an existing submission
+function updateDetailsVerification(sheet, data) {
+  var submittedAtCol = 2; // "Submitted At"
+  var taskNameCol = 5; // "Task Name"
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return; // only header present
+  var range = sheet.getRange(2, 1, lastRow - 1, 10); // read all columns for matching
+  var rows = range.getValues();
+  for (var i = 0; i < rows.length; i++) {
+    var row = rows[i];
+    if (row[submittedAtCol - 1] === data.submittedAt) {
+      // find matching task in payload by name
+      var task = (data.tasks || []).find(function(t){ return t.taskName === row[taskNameCol - 1]; });
+      if (task) {
+        var rowIndex = i + 2; // account for header
+        sheet.getRange(rowIndex, 9, 1, 2).setValues([[
+          task.supervisorVerified,
+          task.supervisorRemark
+        ]]);
+      }
+    }
+  }
 }
 
 // Optional: Function to generate monthly report

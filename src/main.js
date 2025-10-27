@@ -1,3 +1,4 @@
+
 // DATA
 const OPENING_CHECKLIST = [
   "Light On",
@@ -31,7 +32,6 @@ let appState = {
   loginTime: null,
   checklistType: "opening",
 };
-
 
 // PERMANENT GOOGLE SHEETS CONFIGURATION
 // These credentials are hardcoded and auto-configured on app load
@@ -516,10 +516,7 @@ function exportToCSV() {
     return;
   }
 
-  // ✅ Add UTF-8 BOM for Excel compatibility
-  let csvContent = "\uFEFF";
-
-  // ✅ Define all possible columns
+  // ✅ Define exact same headers as Google Sheets
   const headers = [
     "Date",
     "Time",
@@ -537,63 +534,53 @@ function exportToCSV() {
     "Verified Time"
   ];
 
-  csvContent += headers.join(",") + "\n";
+  let csvContent = "data:text/csv;charset=utf-8," + headers.join(",") + "\n";
 
+  // ✅ Generate identical rows to Google Sheet
   submissions.forEach((submission) => {
     const completedCount = submission.items.filter((item) => item.checked).length;
-
-    // Extract only time from submittedAt (after comma)
-    const timeOnly = submission.submittedAt.split(",")[1]?.trim() || submission.submittedAt;
+    const timeOnly =
+      submission.submittedAt && submission.submittedAt.includes(",")
+        ? submission.submittedAt.split(",")[1].trim()
+        : submission.submittedAt || "";
 
     submission.items.forEach((item) => {
-      // ✅ Clean up encoding errors (fixes “âœ“”)
-      const cleanTimestamp = (item.timestamp || "")
-        .replace("âœ“", "✓")
-        .replace(/â/g, "");
-
-      // ✅ Optional verification fields (if available)
-      const verifiedBy = submission.verifiedBy || "";
-      const verifiedTime = submission.verifiedTime || "";
-
       const row = [
-        submission.date,
+        submission.date || "",
         timeOnly,
-        submission.user,
-        submission.role,
-        submission.checklistType,
-        completedCount,
-        submission.items.length,
-        submission.loginTime,
-        `"${item.task}"`,
+        submission.user || "",
+        submission.role || "",
+        submission.checklistType || "",
+        completedCount || "",
+        submission.items.length || "",
+        submission.loginTime || "",
+        item.task || "",
         item.checked ? "Done" : "Not Done",
-        `"${item.remark}"`,
-        `"${cleanTimestamp}"`,
-        verifiedBy,
-        verifiedTime
-      ].join(",");
+        (item.remark || "").replace(/[\n\r]/g, " "), // strip newlines
+        item.timestamp || "",
+        submission.supervisor || "", // verified by
+        submission.verifiedAt || "" // verified time
+      ].map((v) => `"${v}"`).join(",");
 
       csvContent += row + "\n";
     });
   });
 
-  // ✅ Create Blob for proper encoding (no weird symbols)
-  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-  const today = new Date().toLocaleDateString("en-IN").replace(/\//g, "-");
+  // ✅ Trigger download
+  const encodedUri = encodeURI(csvContent);
   const link = document.createElement("a");
-  link.href = URL.createObjectURL(blob);
-  link.download = `checklist-report-${today}.csv`;
+  link.setAttribute("href", encodedUri);
+  link.setAttribute("download", `Checklist_Report_${new Date().toISOString().split("T")[0]}.csv`);
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
 
-  // ✅ Confirmation alert
-  showAlertInContainer("historyAlertContainer", "✓ CSV exported successfully!", "success");
+  showAlertInContainer(
+    "historyAlertContainer",
+    "✓ CSV exported successfully!",
+    "success"
+  );
 }
-
-
-// Manual sync function removed - auto-sync handles everything now
-
-// Settings modal functions removed - credentials are hardcoded now
 
 // UTILITIES
 function showView(viewId) {
@@ -658,3 +645,19 @@ window.onclick = function (event) {
     closeTaskModal();
   }
 };
+
+// Expose functions for inline HTML event handlers
+Object.assign(window, {
+  handleLogin,
+  startChecklist,
+  backToDashboard,
+  switchChecklist,
+  handleSubmitChecklist,
+  showHistoryView,
+  viewTaskDetails,
+  closeTaskModal,
+  showVerifyView,
+  submitVerification,
+  exportToCSV,
+  logout,
+});

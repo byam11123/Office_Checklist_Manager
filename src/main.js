@@ -31,6 +31,7 @@ let appState = {
   role: null,
   loginTime: null,
   checklistType: "opening",
+  verifyType: "opening",
 };
 
 // PERMANENT GOOGLE SHEETS CONFIGURATION
@@ -344,7 +345,8 @@ function closeTaskModal() {
   document.getElementById("taskModal").classList.remove("show");
 }
 
-function showVerifyView() {
+function showVerifyView(type) {
+  if (type) appState.verifyType = type;
   showView("verifyView");
   const submissions = JSON.parse(
     localStorage.getItem("checklistSubmissions") || "[]"
@@ -357,8 +359,39 @@ function showVerifyView() {
     return;
   }
 
-  const lastSubmission = submissions[submissions.length - 1];
+  // Find most recent submission of the selected type
+  const selectedType = appState.verifyType || "opening";
+  let selectedIndex = -1;
+  for (let i = submissions.length - 1; i >= 0; i--) {
+    if (submissions[i].checklistType === selectedType) { selectedIndex = i; break; }
+  }
+
   container.innerHTML = "";
+
+  // Toggle buttons
+  const toggle = document.createElement("div");
+  toggle.className = "toggle-group";
+  const openBtn = document.createElement("button");
+  openBtn.className = `toggle-btn ${selectedType === "opening" ? "active" : ""}`;
+  openBtn.textContent = "Show Opening";
+  openBtn.onclick = () => { appState.verifyType = "opening"; showVerifyView(); };
+  const closeBtn = document.createElement("button");
+  closeBtn.className = `toggle-btn ${selectedType === "closing" ? "active" : ""}`;
+  closeBtn.textContent = "Show Closing";
+  closeBtn.onclick = () => { appState.verifyType = "closing"; showVerifyView(); };
+  toggle.appendChild(openBtn);
+  toggle.appendChild(closeBtn);
+  container.appendChild(toggle);
+
+  if (selectedIndex === -1) {
+    const none = document.createElement("p");
+    none.style.cssText = "text-align:center;color:#999;padding:20px;";
+    none.textContent = `No ${selectedType} submissions to verify.`;
+    container.appendChild(none);
+    return;
+  }
+
+  const lastSubmission = submissions[selectedIndex];
 
   const section = document.createElement("div");
   section.className = "checklist-section";
@@ -428,7 +461,7 @@ function showVerifyView() {
   submitBtn.className = "button button-primary";
   submitBtn.textContent = "Confirm Verification";
   submitBtn.onclick = () =>
-    submitVerification(lastSubmission, submissions.length - 1);
+    submitVerification(lastSubmission, selectedIndex);
 
   buttonGroup.appendChild(submitBtn);
   section.appendChild(buttonGroup);
@@ -693,9 +726,10 @@ function updateLastView(viewId) {
     const s = JSON.parse(raw);
     s.lastView = viewId;
     if (viewId === "checklistView") s.checklistType = appState.checklistType;
+    if (viewId === "verifyView") s.checklistType = appState.verifyType;
     localStorage.setItem(SESSION_KEY, JSON.stringify(s));
     // Also reflect in URL hash to survive reloads reliably
-    const hash = `view=${viewId}` + (viewId === "checklistView" ? `&type=${appState.checklistType}` : "");
+    const hash = `view=${viewId}` + (viewId === "checklistView" ? `&type=${appState.checklistType}` : (viewId === "verifyView" ? `&type=${appState.verifyType}` : ""));
     if (location.hash !== `#${hash}`) location.replace(`#${hash}`);
   } catch (_) {}
 }
@@ -732,6 +766,7 @@ function restoreSession() {
     } else if (lastView === "historyView") {
       showHistoryView();
     } else if (lastView === "verifyView" && appState.role === "supervisor") {
+      appState.verifyType = type === "closing" ? "closing" : "opening";
       showVerifyView();
     } else {
       showView("dashboardView");

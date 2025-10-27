@@ -654,6 +654,26 @@ textarea:focus {
   font-family: monospace;
 }
 
+/* Toggle buttons for verify view */
+.toggle-group {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.toggle-btn {
+  background: #f0f0f0;
+  color: #333;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  font-weight: 600;
+}
+.toggle-btn.active {
+  background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
+  color: #fff;
+}
+
 .modal-button-group {
   display: flex;
   gap: 10px;

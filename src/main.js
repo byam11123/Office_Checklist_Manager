@@ -479,6 +479,8 @@ function submitVerification(submission, index) {
     item.supervisorVerified = checkbox.checked;
     item.supervisorRemark = remark.value;
     item.supervisorTime = formatTime(new Date());
+    // Supervisor decision overrides original status so counts reflect verification
+    item.checked = checkbox.checked;
   });
   submission.supervisorReview = true;
   submission.supervisor = appState.user;
@@ -587,6 +589,9 @@ function exportToCSV() {
         : submission.submittedAt || "";
 
     submission.items.forEach((item) => {
+      const effectiveRemark = (item.supervisorRemark && String(item.supervisorRemark).trim() !== "")
+        ? item.supervisorRemark
+        : (item.remark || "");
       const row = [
         submission.date || "",
         timeOnly,
@@ -598,7 +603,7 @@ function exportToCSV() {
         submission.loginTime || "",
         item.task || "",
         item.checked ? "Done" : "Not Done",
-        (item.remark || "").replace(/[\n\r]/g, " "), // strip newlines
+        String(effectiveRemark).replace(/[\n\r]/g, " "), // prefer supervisorRemark if present
         item.timestamp || "",
         submission.supervisor || "", // verified by
         submission.verifiedAt || "" // verified time

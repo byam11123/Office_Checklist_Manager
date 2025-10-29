@@ -297,6 +297,13 @@ function updateSummaryVerification(sheet, data) {
   for (var i = 0; i < values.length; i++) {
     if (values[i][0] === data.submittedAt) {
       var rowIndex = i + 2; // account for header row
+      // Update Completed, Total and Completion % (cols 6-8) based on supervisor overrides
+      var completed = Number(data.completedCount || 0);
+      var total = Number(data.totalCount || 0);
+      var completionPercent = total > 0 ? ((completed / total) * 100).toFixed(1) + "%" : "0%";
+      sheet.getRange(rowIndex, 6, 1, 3).setValues([[completed, total, completionPercent]]);
+
+      // Update Supervisor Review fields (cols 10-12)
       sheet.getRange(rowIndex, 10, 1, 3).setValues([[
         data.supervisorReview ? "Yes" : "No",
         data.supervisor || "-",
@@ -323,6 +330,10 @@ function updateDetailsVerification(sheet, data) {
       var task = (data.tasks || []).find(function(t){ return t.taskName === row[taskNameCol - 1]; });
       if (task) {
         var rowIndex = i + 2; // account for header
+        // Reflect supervisor override in Status (col 6)
+        var done = String(task.status || "").toLowerCase() === "done";
+        sheet.getRange(rowIndex, 6).setValue(done ? "Done" : "Not Done");
+        // Update Supervisor Verified and Remark (cols 9-10)
         sheet.getRange(rowIndex, 9, 1, 2).setValues([[
           task.supervisorVerified,
           task.supervisorRemark

@@ -33,6 +33,8 @@ let appState = {
   verifyType: "opening",
   currentSubmission: null,
   isUpdating: false,
+  historyBuffer: null,
+  localIndexMap: {},
 };
 
 // PERMANENT GOOGLE SHEETS CONFIGURATION
@@ -383,24 +385,60 @@ function performSubmission(updateReason) {
 
 function showHistoryView() {
   showView("historyView");
-  const submissions = JSON.parse(
+  const localSubs = JSON.parse(
     localStorage.getItem("checklistSubmissions") || "[]"
   );
+  appState.localIndexMap = createLocalIndexMap(localSubs);
+  renderHistoryTable(localSubs, "local", appState.localIndexMap);
+  // Try fetching cloud history (JSONP); will merge and keep edit for local rows
+  tryFetchCloudHistory(localSubs, appState.localIndexMap);
+}
+
+function submissionKey(s) {
+  return `${s.date}|${s.user}|${s.checklistType}|${s.submittedAt}`;
+}
+
+function createLocalIndexMap(localSubs) {
+  const map = {};
+  (localSubs || []).forEach((s, idx) => {
+    map[submissionKey(s)] = idx;
+  });
+  return map;
+}
+
+function mergeCloudLocal(cloudSubs, localSubs) {
+  const resultMap = {};
+  const pushIfNew = (s) => {
+    const key = submissionKey(s);
+    if (!resultMap[key]) resultMap[key] = s;
+  };
+  (cloudSubs || []).forEach(pushIfNew);
+  (localSubs || []).forEach(pushIfNew);
+  const merged = Object.values(resultMap);
+  merged.sort((a, b) => {
+    const at = new Date(a.submittedAt || a.date).getTime();
+    const bt = new Date(b.submittedAt || b.date).getTime();
+    return bt - at;
+  });
+  return merged;
+}
+
+function renderHistoryTable(submissions, source, localIndexMap) {
   const tbody = document.getElementById("historyTableBody");
   tbody.innerHTML = "";
 
-  if (submissions.length === 0) {
+  appState.historyBuffer = { type: source, data: submissions };
+
+  if (!submissions || submissions.length === 0) {
     tbody.innerHTML =
       '<tr><td colspan="6" style="text-align: center; color: #999;">No records found</td></tr>';
     return;
   }
 
-  submissions.reverse().forEach((submission, index) => {
+  submissions.forEach((submission, index) => {
     const row = document.createElement("tr");
-    const completedCount = submission.items.filter(
-      (item) => item.checked
-    ).length;
-    const totalCount = submission.items.length;
+    const completedCount = (submission.items || []).filter((item) => item.checked).length;
+    const totalCount = (submission.items || []).length;
     const completedText = `${completedCount}/${totalCount}`;
     const submissionCount = submission.submissionCount || 1;
     const submissionBadge =
@@ -408,14 +446,25 @@ function showHistoryView() {
         ? ` <span style="background: #43e97b; color: white; padding: 2px 6px; border-radius: 8px; font-size: 10px; font-weight: 600;">v${submissionCount}</span>`
         : "";
 
-    // Extract only time from submittedAt
     const timeOnly =
-      submission.submittedAt.split(",")[1]?.trim() || submission.submittedAt;
+      (submission.submittedAt && submission.submittedAt.includes(","))
+        ? submission.submittedAt.split(",")[1].trim()
+        : submission.submittedAt || "";
+
+    const idxInBuffer = index; // buffer index equals list index now
+    const key = submissionKey(submission);
+    const localIdx = localIndexMap ? localIndexMap[key] : undefined;
+    const editBtn =
+      typeof localIdx === "number"
+        ? `<button class="view-btn" style="margin-left: 5px; background: #43e97b;" onclick="reopenForEdit(${localIdx})">Edit</button>`
+        : "";
+
+    const deleteBtn = `<button class="view-btn" style="margin-left: 5px; background: #ff6b6b;" onclick="confirmDelete(${idxInBuffer})">Delete</button>`;
 
     row.innerHTML = `
-                    <td>${submission.date}</td>
+                    <td>${submission.date || ""}</td>
                     <td>${timeOnly}</td>
-                    <td>${submission.user}</td>
+                    <td>${submission.user || ""}</td>
                     <td>${
                       submission.checklistType === "opening"
                         ? "🌅 Opening"
@@ -423,16 +472,154 @@ function showHistoryView() {
                     }${submissionBadge}</td>
                     <td><span class="completed-badge">${completedText}</span></td>
                     <td>
-                      <button class="view-btn" onclick="viewTaskDetails(${
-                        submissions.length - index - 1
-                      })">View</button>
-                      <button class="view-btn" style="margin-left: 5px; background: #43e97b;" onclick="reopenForEdit(${
-                        submissions.length - index - 1
-                      })">Edit</button>
+                      <button class="view-btn" onclick="viewTaskDetailsBuffered(${idxInBuffer})">View</button>
+                      ${editBtn}
+                      ${deleteBtn}
                     </td>
                 `;
     tbody.appendChild(row);
   });
+}
+
+function tryFetchCloudHistory(localSubs, localIndexMap) {
+  const scriptUrl = localStorage.getItem("googleScriptUrl");
+  if (!scriptUrl) return;
+  const cb = "onCloudHistory_" + Date.now();
+  const url = `${scriptUrl}?callback=${cb}`;
+  const s = document.createElement("script");
+  let done = false;
+  window[cb] = function (resp) {
+    done = true;
+    try { document.body.removeChild(s); } catch(_) {}
+    delete window[cb];
+    if (resp && resp.success && Array.isArray(resp.submissions)) {
+      const merged = mergeCloudLocal(resp.submissions, localSubs);
+      renderHistoryTable(merged, "cloud", localIndexMap);
+    }
+  };
+  s.src = url;
+  s.async = true;
+  document.body.appendChild(s);
+  setTimeout(() => {
+    if (!done) {
+      try { document.body.removeChild(s); } catch(_) {}
+      delete window[cb];
+    }
+  }, 5000);
+}
+
+function confirmDelete(index) {
+  const buf = appState.historyBuffer;
+  if (!buf || !buf.data || !buf.data[index]) return;
+  const s = buf.data[index];
+  const ok = confirm(`Delete ${s.checklistType} submission for ${s.user} on ${s.date}?`);
+  if (!ok) return;
+  // Delete from cloud if configured
+  const scriptUrl = localStorage.getItem("googleScriptUrl");
+  if (scriptUrl) {
+    try {
+      fetch(scriptUrl, {
+        method: "POST",
+        mode: "no-cors",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "delete",
+          date: s.date,
+          submittedAt: s.submittedAt,
+          user: s.user,
+          checklistType: s.checklistType,
+        }),
+      });
+    } catch (_) {}
+  }
+  // Delete locally if exists
+  const key = submissionKey(s);
+  const localIdx = appState.localIndexMap ? appState.localIndexMap[key] : undefined;
+  if (typeof localIdx === "number") {
+    try {
+      const arr = JSON.parse(localStorage.getItem("checklistSubmissions") || "[]");
+      arr.splice(localIdx, 1);
+      localStorage.setItem("checklistSubmissions", JSON.stringify(arr));
+    } catch (_) {}
+  }
+  // Refresh
+  showHistoryView();
+}
+
+function viewTaskDetailsBuffered(index) {
+  const buf = appState.historyBuffer;
+  if (!buf || !buf.data || !buf.data[index]) return;
+  const submission = buf.data[index];
+
+  // Render modal identical to viewTaskDetails but from provided object
+  document.getElementById("modalTitle").textContent = `${submission.user} - ${
+    submission.checklistType === "opening" ? "🌅 Opening" : "🌙 Closing"
+  } (${submission.date})`;
+
+  const taskList = document.getElementById("modalTaskList");
+  taskList.innerHTML = "";
+
+  if (submission.submissionCount && submission.submissionCount > 1) {
+    const revisionSection = document.createElement("div");
+    revisionSection.style.cssText =
+      "background: #f0f8ff; padding: 12px; border-radius: 8px; margin-bottom: 15px; border-left: 4px solid #43e97b;";
+
+    const revisionTitle = document.createElement("div");
+    revisionTitle.style.cssText =
+      "font-weight: 600; color: #333; margin-bottom: 8px;";
+    revisionTitle.textContent = `📝 Submission History (Version ${submission.submissionCount})`;
+    revisionSection.appendChild(revisionTitle);
+
+    if (submission.revisionHistory && submission.revisionHistory.length > 0) {
+      submission.revisionHistory.forEach((entry) => {
+        const entryDiv = document.createElement("div");
+        entryDiv.style.cssText =
+          "font-size: 12px; color: #666; margin-top: 5px; padding-left: 10px;";
+        entryDiv.textContent = entry;
+        revisionSection.appendChild(entryDiv);
+      });
+    }
+
+    taskList.appendChild(revisionSection);
+  }
+
+  (submission.items || []).forEach((item, idx) => {
+    const taskDiv = document.createElement("div");
+    taskDiv.className = `task-list-item ${item.checked ? "done" : ""}`;
+
+    const statusDiv = document.createElement("div");
+    statusDiv.className = "task-status";
+
+    const taskName = document.createElement("div");
+    taskName.className = "task-name";
+    taskName.textContent = `${idx + 1}. ${item.task}`;
+
+    const checkBadge = document.createElement("span");
+    checkBadge.className = `task-check ${item.checked ? "done" : "not-done"}`;
+    checkBadge.textContent = item.checked ? "✓ DONE" : "✗ NOT DONE";
+
+    statusDiv.appendChild(taskName);
+    statusDiv.appendChild(checkBadge);
+    taskDiv.appendChild(statusDiv);
+
+    if (item.remark) {
+      const remarkDiv = document.createElement("div");
+      remarkDiv.className = "task-remark";
+      remarkDiv.textContent = `Remark: ${item.remark}`;
+      taskDiv.appendChild(remarkDiv);
+    }
+
+    if (item.timestamp) {
+      const timeDiv = document.createElement("div");
+      timeDiv.className = "task-time";
+      timeDiv.textContent = item.timestamp;
+      taskDiv.appendChild(timeDiv);
+    }
+
+    taskList.appendChild(taskDiv);
+  });
+
+  document.getElementById("taskModal").classList.add("show");
 }
 
 function viewTaskDetails(index) {
@@ -972,7 +1159,9 @@ Object.assign(window, {
   switchChecklist,
   handleSubmitChecklist,
   showHistoryView,
-  viewTaskDetails,
+  // viewTaskDetails is superseded by buffered version for history rendering
+  viewTaskDetailsBuffered,
+  confirmDelete,
   closeTaskModal,
   closeUpdateReasonModal,
   confirmUpdateReason,

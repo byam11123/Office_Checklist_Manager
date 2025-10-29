@@ -25,6 +25,15 @@ function doPost(e) {
     // Setup headers if needed
     setupSummaryHeaders(summarySheet);
     setupDetailsHeaders(detailsSheet);
+
+    // Deletion endpoint
+    if (data && (data.action === 'delete' || data.delete === true)) {
+      var ok = deleteSubmission(summarySheet, detailsSheet, data);
+      lock.releaseLock();
+      return ContentService.createTextOutput(
+        JSON.stringify({success: ok, message: ok ? "Deleted" : "Not found"})
+      ).setMimeType(ContentService.MimeType.JSON);
+    }
     
     if (data.isUpdate || data.isVerification) {
       // Update existing rows instead of appending new ones
@@ -32,19 +41,19 @@ function doPost(e) {
       try {
         updated = updateExistingSubmission(summarySheet, detailsSheet, data);
         if (!updated) {
-          // Fallback: append if not found
-          addSummaryRow(summarySheet, data);
+          // Fallback: append if not found (write details first, then summary)
           addDetailedRows(detailsSheet, data);
+          addSummaryRow(summarySheet, data, detailsSheet);
         }
       } catch (updateErr) {
         // If anything goes wrong, fall back to append to avoid data loss
-        addSummaryRow(summarySheet, data);
         addDetailedRows(detailsSheet, data);
+        addSummaryRow(summarySheet, data, detailsSheet);
       }
     } else {
-      // First-time submission: append rows
-      addSummaryRow(summarySheet, data);
+      // First-time submission: write details first, then summary so percent is accurate
       addDetailedRows(detailsSheet, data);
+      addSummaryRow(summarySheet, data, detailsSheet);
     }
     
     lock.releaseLock();
@@ -58,6 +67,171 @@ function doPost(e) {
       JSON.stringify({success: false, error: err.toString()})
     ).setMimeType(ContentService.MimeType.JSON);
   }
+}
+
+// Delete a submission from both Summary and Task Details
+function deleteSubmission(summarySheet, detailsSheet, data) {
+  var date = data.date;
+  var user = data.user;
+  var type = data.checklistType;
+  var submittedAt = data.submittedAt; // optional precise key
+  var found = false;
+
+  // Delete Summary rows
+  var sum = summarySheet.getDataRange().getValues();
+  for (var i = sum.length - 1; i >= 1; i--) {
+    var r = sum[i];
+    if (r[0] === date && r[2] === user && r[4] === type && (!submittedAt || r[1] === submittedAt)) {
+      summarySheet.deleteRow(i + 1);
+      found = true;
+    }
+  }
+
+  // Delete Details rows
+  var det = detailsSheet.getDataRange().getValues();
+  for (var j = det.length - 1; j >= 1; j--) {
+    var d = det[j];
+    if (d[0] === date && d[2] === user && d[3] === type && (!submittedAt || d[1] === submittedAt)) {
+      detailsSheet.deleteRow(j + 1);
+    }
+  }
+
+  return found;
+}
+
+// Read API: returns unified JSON history, supports JSONP via ?callback=fn
+function doGet(e) {
+  try {
+    var sheet = SpreadsheetApp.getActiveSpreadsheet();
+    var summarySheet = sheet.getSheetByName("Summary");
+    var detailsSheet = sheet.getSheetByName("Task Details");
+
+    if (!summarySheet || !detailsSheet) {
+      return respond_(e, { success: true, submissions: [] });
+    }
+
+    var summary = summarySheet.getDataRange().getValues();
+    var details = detailsSheet.getDataRange().getValues();
+
+    var byKey = {};
+
+    // Build from Summary (skip header)
+    for (var i = 1; i < summary.length; i++) {
+      var row = summary[i];
+      var date = row[0];
+      var submittedAt = row[1];
+      var user = row[2];
+      var role = row[3];
+      var type = row[4];
+      var completedCount = row[5];
+      var totalCount = row[6];
+      var loginTime = row[8];
+      var submissionCount = row[9];
+      var revisionHistoryText = row[10] || "";
+      var supervisorReview = (row[11] || "").toString().toLowerCase() === "yes";
+      var supervisor = row[12] || "-";
+      var verifiedAt = row[13] || "-";
+
+      var key = date + "|" + user + "|" + type;
+      byKey[key] = {
+        date: date,
+        submittedAt: submittedAt,
+        user: user,
+        role: role,
+        checklistType: type,
+        completedCount: Number(completedCount) || 0,
+        totalCount: Number(totalCount) || 0,
+        loginTime: loginTime,
+        submissionCount: Number(submissionCount) || 1,
+        revisionHistory: revisionHistoryText ? revisionHistoryText.split(" | ") : [],
+        supervisorReview: supervisorReview,
+        supervisor: supervisor,
+        verifiedAt: verifiedAt,
+        // items shaped like client localStorage expects
+        items: []
+      };
+    }
+
+    // Attach task details (skip header)
+    for (var j = 1; j < details.length; j++) {
+      var d = details[j];
+      var dDate = d[0];
+      var dSubmittedAt = d[1];
+      var dUser = d[2];
+      var dType = d[3];
+      var taskName = d[4];
+      var status = d[5];
+      var remark = d[6];
+      var timestamp = d[7];
+      var supVerified = d[8];
+      var supRemark = d[9];
+
+      var key2 = dDate + "|" + dUser + "|" + dType;
+      if (!byKey[key2]) {
+        // In case a details row exists without summary (shouldn't happen), seed minimal
+        byKey[key2] = {
+          date: dDate,
+          submittedAt: dSubmittedAt,
+          user: dUser,
+          role: "",
+          checklistType: dType,
+          completedCount: 0,
+          totalCount: 0,
+          loginTime: "",
+          submissionCount: 1,
+          revisionHistory: [],
+          supervisorReview: false,
+          supervisor: "-",
+          verifiedAt: "-",
+          items: []
+        };
+      }
+      byKey[key2].items.push({
+        task: taskName,
+        checked: String(status || "").toLowerCase() === "done",
+        remark: remark && remark !== "-" ? remark : "",
+        timestamp: timestamp && timestamp !== "-" ? timestamp : "",
+        supervisorVerified: supVerified,
+        supervisorRemark: supRemark
+      });
+    }
+
+    // Recompute counts from items for reliability
+    var submissions = Object.keys(byKey).map(function(k){
+      var s = byKey[k];
+      var total = s.items.length;
+      var completed = 0;
+      for (var z = 0; z < s.items.length; z++) {
+        if (s.items[z].checked) completed++;
+      }
+      s.totalCount = total;
+      s.completedCount = completed;
+      return s;
+    });
+
+    // Sort by submittedAt desc if possible
+    submissions.sort(function(a,b){
+      var at = new Date(a.submittedAt || a.date).getTime();
+      var bt = new Date(b.submittedAt || b.date).getTime();
+      return bt - at;
+    });
+
+    return respond_(e, { success: true, submissions: submissions });
+
+  } catch (err) {
+    return respond_(e, { success: false, error: err.toString(), submissions: [] });
+  }
+}
+
+function respond_(e, obj) {
+  var payload = JSON.stringify(obj);
+  var cb = e && e.parameter && e.parameter.callback;
+  if (cb) {
+    return ContentService.createTextOutput(cb + "(" + payload + ")")
+      .setMimeType(ContentService.MimeType.JAVASCRIPT);
+  }
+  return ContentService.createTextOutput(payload)
+    .setMimeType(ContentService.MimeType.JSON);
 }
 
 function getOrCreateSheet(spreadsheet, sheetName) {
@@ -122,8 +296,11 @@ function setupDetailsHeaders(sheet) {
   }
 }
 
-function addSummaryRow(sheet, data) {
-  var completionPercent = ((data.completedCount / data.totalCount) * 100).toFixed(1) + "%";
+function addSummaryRow(sheet, data, detailsSheet) {
+  // Prefer server-side recompute from Task Details if sheet provided
+  var completionPercent = detailsSheet
+    ? recalcCompletionPercent(detailsSheet, data.user, data.date, data.checklistType)
+    : ((data.completedCount / data.totalCount) * 100).toFixed(1) + "%";
   var revisionHistoryText = (data.revisionHistory || []).join(" | ");
   
   var row = [
@@ -167,6 +344,21 @@ function addSummaryRow(sheet, data) {
   
   // Auto-resize columns
   sheet.autoResizeColumns(1, row.length);
+}
+
+// Recalculate completion % directly from Task Details sheet
+function recalcCompletionPercent(detailsSheet, user, date, type) {
+  var values = detailsSheet.getDataRange().getValues();
+  var done = 0, total = 0;
+  for (var i = 1; i < values.length; i++) {
+    var r = values[i];
+    if (r[0] === date && r[2] === user && r[3] === type) {
+      total++;
+      if (String(r[5]).toLowerCase() === "done") done++;
+    }
+  }
+  var pct = total ? ((done / total) * 100).toFixed(1) + "%" : "0%";
+  return pct;
 }
 
 function addDetailedRows(sheet, data) {
@@ -223,17 +415,27 @@ function updateExistingSubmission(summarySheet, detailsSheet, data) {
   var range = summarySheet.getRange(2, 1, lastRow - 1, 5);
   var values = range.getValues();
   
-  for (var i = 0; i < values.length; i++) {
+for (var i = 0; i < values.length; i++) {
     var row = values[i];
     if (row[0] === data.date && row[2] === data.user && row[4] === data.checklistType) {
       var rowIndex = i + 2;
-      var completionPercent = ((data.completedCount / data.totalCount) * 100).toFixed(1) + "%";
       var revisionHistoryText = (data.revisionHistory || []).join(" | ");
+
+      // First update Task Details rows (delete + insert)
+      updateTaskDetails(detailsSheet, data);
+
+      // Recompute completion from Task Details sheet
+      var completionPercent = recalcCompletionPercent(detailsSheet, data.user, data.date, data.checklistType);
+
+      // Also recompute counts from payload to keep columns 6-7 aligned
+      var completedCount = 0;
+      var totalCount = 0;
+      (data.tasks || []).forEach(function(t){ totalCount++; if (String(t.status||"").toLowerCase()==="done") completedCount++; });
       
       // Update all relevant columns
       summarySheet.getRange(rowIndex, 2).setValue(data.submittedAt);
-      summarySheet.getRange(rowIndex, 6).setValue(data.completedCount);
-      summarySheet.getRange(rowIndex, 7).setValue(data.totalCount);
+      summarySheet.getRange(rowIndex, 6).setValue(completedCount);
+      summarySheet.getRange(rowIndex, 7).setValue(totalCount);
       summarySheet.getRange(rowIndex, 8).setValue(completionPercent);
       summarySheet.getRange(rowIndex, 10).setValue(data.submissionCount || 1);
       summarySheet.getRange(rowIndex, 11).setValue(revisionHistoryText);
@@ -251,9 +453,6 @@ function updateExistingSubmission(summarySheet, detailsSheet, data) {
       } else {
         percentCell.setBackground("#F8D7DA").setFontColor("#721C24");
       }
-      
-      // Update Task Details sheet - delete old rows and add new ones
-      updateTaskDetails(detailsSheet, data);
       
       return true;
     }

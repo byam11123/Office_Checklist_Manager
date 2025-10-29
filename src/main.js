@@ -737,21 +737,10 @@ function submitVerification(submission, index) {
 }
 
 // AUTO-SYNC FUNCTION
-function syncSingleSubmissionToSheets(
-  submission,
-  isVerification = false,
-  isUpdate = false
-) {
-  const scriptUrl = localStorage.getItem("googleScriptUrl");
-
-  if (!scriptUrl) {
-    console.warn("Google Sheets not configured. Data saved locally only.");
-    return;
-  }
-
+function buildExportPayload(submission, isVerification = false, isUpdate = false) {
   const completedCount = submission.items.filter((item) => item.checked).length;
 
-  // Prepare detailed task data for the sheet
+  // Prepare detailed task data for the sheet/CSV
   const taskDetails = submission.items.map((item) => ({
     taskName: item.task,
     status: item.checked ? "Done" : "Not Done",
@@ -766,7 +755,7 @@ function syncSingleSubmissionToSheets(
     supervisorRemark: item.supervisorRemark || "-",
   }));
 
-  const payload = {
+  return {
     date: submission.date,
     submittedAt: submission.submittedAt,
     user: submission.user,
@@ -784,6 +773,21 @@ function syncSingleSubmissionToSheets(
     isVerification: isVerification,
     isUpdate: isUpdate,
   };
+}
+
+function syncSingleSubmissionToSheets(
+  submission,
+  isVerification = false,
+  isUpdate = false
+) {
+  const scriptUrl = localStorage.getItem("googleScriptUrl");
+
+  if (!scriptUrl) {
+    console.warn("Google Sheets not configured. Data saved locally only.");
+    return;
+  }
+
+  const payload = buildExportPayload(submission, isVerification, isUpdate);
 
   fetch(scriptUrl, {
     method: "POST",
@@ -833,39 +837,40 @@ function exportToCSV() {
 
   let csvContent = "data:text/csv;charset=utf-8," + headers.join(",") + "\n";
 
-  // ✅ Generate identical rows to Google Sheet
+  // ✅ Generate rows from unified export payload
   submissions.forEach((submission) => {
-    const completedCount = submission.items.filter(
-      (item) => item.checked
-    ).length;
+    const payload = buildExportPayload(submission);
+
     const timeOnly =
-      submission.submittedAt && submission.submittedAt.includes(",")
-        ? submission.submittedAt.split(",")[1].trim()
-        : submission.submittedAt || "";
+      payload.submittedAt && payload.submittedAt.includes(",")
+        ? payload.submittedAt.split(",")[1].trim()
+        : payload.submittedAt || "";
 
-    const revisionHistoryText = (submission.revisionHistory || []).join(" | ");
+    const revisionHistoryText = (payload.revisionHistory || []).join(" | ");
 
-    submission.items.forEach((item) => {
-      const effectiveRemark = (item.supervisorRemark && String(item.supervisorRemark).trim() !== "")
-        ? item.supervisorRemark
-        : (item.remark || "");
+    payload.tasks.forEach((item) => {
+      const effectiveRemark =
+        item.supervisorRemark && String(item.supervisorRemark).trim() !== ""
+          ? item.supervisorRemark
+          : item.remark || "";
+
       const row = [
-        submission.date || "",
+        payload.date || "",
         timeOnly,
-        submission.user || "",
-        submission.role || "",
-        submission.checklistType || "",
-        completedCount || "",
-        submission.items.length || "",
-        submission.loginTime || "",
-        submission.submissionCount || 1,
+        payload.user || "",
+        payload.role || "",
+        payload.checklistType || "",
+        payload.completedCount || "",
+        payload.totalCount || "",
+        payload.loginTime || "",
+        payload.submissionCount || 1,
         revisionHistoryText,
-        item.task || "",
-        item.checked ? "Done" : "Not Done",
-        String(effectiveRemark).replace(/[\n\r]/g, " "), // prefer supervisorRemark if present
+        item.taskName || "",
+        item.status || "",
+        String(effectiveRemark).replace(/[\n\r]/g, " "),
         item.timestamp || "",
-        submission.supervisor || "", // verified by
-        submission.verifiedAt || "", // verified time
+        payload.supervisor || "",
+        payload.verifiedAt || "",
       ]
         .map((v) => `"${v}"`)
         .join(",");

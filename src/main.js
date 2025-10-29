@@ -1,4 +1,3 @@
-
 // DATA
 const OPENING_CHECKLIST = [
   "Light On",
@@ -32,13 +31,16 @@ let appState = {
   loginTime: null,
   checklistType: "opening",
   verifyType: "opening",
+  currentSubmission: null,
+  isUpdating: false,
 };
 
 // PERMANENT GOOGLE SHEETS CONFIGURATION
 // These credentials are hardcoded and auto-configured on app load
 const GOOGLE_SHEETS_CONFIG = {
   sheetId: "15OgjRm14ywCmJVzrGrMxn8xagUU4SLrEOcTB55smkes",
-  scriptUrl: "https://script.google.com/macros/s/AKfycbxsdiPSiG1t5N053LDebEt8ds5im58hHMRyJt6H7kvm0gEYCFqelp2GLOYbjwiM-6TE3w/exec"
+  scriptUrl:
+    "https://script.google.com/macros/s/AKfycbxsdiPSiG1t5N053LDebEt8ds5im58hHMRyJt6H7kvm0gEYCFqelp2GLOYbjwiM-6TE3w/exec",
 };
 
 // SESSION PERSISTENCE
@@ -52,6 +54,18 @@ let lastActivityAt = Date.now();
   localStorage.setItem("googleScriptUrl", GOOGLE_SHEETS_CONFIG.scriptUrl);
   console.log("✓ Google Sheets integration initialized");
 })();
+
+// HELPER: Find existing submission for today
+function findExistingSubmission(date, user, type) {
+  const submissions = JSON.parse(
+    localStorage.getItem("checklistSubmissions") || "[]"
+  );
+
+  return submissions.find(
+    (sub) =>
+      sub.date === date && sub.user === user && sub.checklistType === type
+  );
+}
 
 // LOGIN
 function handleLogin(event) {
@@ -102,6 +116,23 @@ function handleLogin(event) {
 
 function startChecklist(type) {
   appState.checklistType = type;
+
+  // Check for existing same-day submission
+  const todayDate = new Date().toLocaleDateString("en-IN");
+  const existingSubmission = findExistingSubmission(
+    todayDate,
+    appState.user,
+    type
+  );
+
+  if (existingSubmission) {
+    appState.currentSubmission = existingSubmission;
+    appState.isUpdating = true;
+  } else {
+    appState.currentSubmission = null;
+    appState.isUpdating = false;
+  }
+
   showView("checklistView");
   document.getElementById("checklistTitle").textContent =
     type === "opening" ? "Opening Checklist" : "Closing Checklist";
@@ -117,6 +148,12 @@ function startChecklist(type) {
     appState.loginTime
   );
   renderChecklist();
+
+  // Show indicator if updating
+  if (appState.isUpdating) {
+    const alertMsg = `📝 Editing existing submission (Submission #${existingSubmission.submissionCount})`;
+    showAlertInContainer("checklistAlertContainer", alertMsg, "success");
+  }
 }
 
 function renderChecklist() {
@@ -171,6 +208,23 @@ function renderChecklist() {
   });
 
   container.appendChild(section);
+
+  // Prefill from existing submission if updating
+  if (appState.isUpdating && appState.currentSubmission) {
+    appState.currentSubmission.items.forEach((item, index) => {
+      const checkbox = document.getElementById(`checkbox-${index}`);
+      const remark = document.getElementById(`remark-${index}`);
+      const timestamp = document.getElementById(`timestamp-${index}`);
+
+      if (checkbox) checkbox.checked = item.checked;
+      if (remark) remark.value = item.remark || "";
+      if (timestamp && item.checked) {
+        timestamp.textContent = item.timestamp;
+        remark.classList.add("show");
+        timestamp.classList.add("show");
+      }
+    });
+  }
 }
 
 function toggleRemark(index) {
@@ -200,48 +254,130 @@ function switchChecklist() {
 
 function handleSubmitChecklist(event) {
   event.preventDefault();
+
+  // If updating, show reason modal first
+  if (appState.isUpdating) {
+    // Store current form data temporarily
+    const checklist =
+      appState.checklistType === "opening"
+        ? OPENING_CHECKLIST
+        : CLOSING_CHECKLIST;
+    const submissionData = [];
+
+    checklist.forEach((task, index) => {
+      const checkbox = document.getElementById(`checkbox-${index}`);
+      const remark = document.getElementById(`remark-${index}`);
+      const timestamp = document.getElementById(`timestamp-${index}`);
+      submissionData.push({
+        task: task,
+        checked: checkbox.checked,
+        remark: remark.value,
+        timestamp: timestamp.textContent,
+      });
+    });
+
+    appState.pendingSubmissionData = submissionData;
+    document.getElementById("updateReasonModal").classList.add("show");
+    return;
+  }
+
+  // Fresh submission (not updating)
+  performSubmission(null);
+}
+
+function performSubmission(updateReason) {
   const checklist =
     appState.checklistType === "opening"
       ? OPENING_CHECKLIST
       : CLOSING_CHECKLIST;
-  const submissionData = [];
 
-  checklist.forEach((task, index) => {
-    const checkbox = document.getElementById(`checkbox-${index}`);
-    const remark = document.getElementById(`remark-${index}`);
-    const timestamp = document.getElementById(`timestamp-${index}`);
-    submissionData.push({
-      task: task,
-      checked: checkbox.checked,
-      remark: remark.value,
-      timestamp: timestamp.textContent,
+  let submissionData;
+  if (appState.isUpdating && appState.pendingSubmissionData) {
+    submissionData = appState.pendingSubmissionData;
+  } else {
+    submissionData = [];
+    checklist.forEach((task, index) => {
+      const checkbox = document.getElementById(`checkbox-${index}`);
+      const remark = document.getElementById(`remark-${index}`);
+      const timestamp = document.getElementById(`timestamp-${index}`);
+      submissionData.push({
+        task: task,
+        checked: checkbox.checked,
+        remark: remark.value,
+        timestamp: timestamp.textContent,
+      });
     });
-  });
-
-  const payload = {
-    date: new Date().toLocaleDateString("en-IN"),
-    user: appState.user,
-    role: appState.role,
-    loginTime: formatTime(appState.loginTime),
-    checklistType: appState.checklistType,
-    items: submissionData,
-    submittedAt: new Date().toLocaleString("en-IN"),
-  };
+  }
 
   const submissions = JSON.parse(
     localStorage.getItem("checklistSubmissions") || "[]"
   );
-  submissions.push(payload);
-  localStorage.setItem("checklistSubmissions", JSON.stringify(submissions));
 
-  // Auto-sync to Google Sheets
-  syncSingleSubmissionToSheets(payload);
+  if (appState.isUpdating && appState.currentSubmission) {
+    // UPDATE EXISTING SUBMISSION
+    const todayDate = new Date().toLocaleDateString("en-IN");
+    const existingIndex = submissions.findIndex(
+      (sub) =>
+        sub.date === todayDate &&
+        sub.user === appState.user &&
+        sub.checklistType === appState.checklistType
+    );
+
+    if (existingIndex !== -1) {
+      const existing = submissions[existingIndex];
+      const newCount = (existing.submissionCount || 1) + 1;
+      const revisionEntry = `[${new Date().toLocaleString(
+        "en-IN"
+      )}] Submission #${newCount}: ${updateReason}`;
+
+      submissions[existingIndex] = {
+        date: todayDate,
+        user: appState.user,
+        role: appState.role,
+        loginTime: existing.loginTime,
+        checklistType: appState.checklistType,
+        items: submissionData,
+        submittedAt: new Date().toLocaleString("en-IN"),
+        submissionCount: newCount,
+        revisionHistory: [...(existing.revisionHistory || []), revisionEntry],
+        supervisorReview: existing.supervisorReview,
+        supervisor: existing.supervisor,
+        verifiedAt: existing.verifiedAt,
+      };
+
+      localStorage.setItem("checklistSubmissions", JSON.stringify(submissions));
+      syncSingleSubmissionToSheets(submissions[existingIndex], false, true);
+    }
+  } else {
+    // NEW SUBMISSION
+    const payload = {
+      date: new Date().toLocaleDateString("en-IN"),
+      user: appState.user,
+      role: appState.role,
+      loginTime: formatTime(appState.loginTime),
+      checklistType: appState.checklistType,
+      items: submissionData,
+      submittedAt: new Date().toLocaleString("en-IN"),
+      submissionCount: 1,
+      revisionHistory: [],
+    };
+
+    submissions.push(payload);
+    localStorage.setItem("checklistSubmissions", JSON.stringify(submissions));
+    syncSingleSubmissionToSheets(payload);
+  }
 
   showAlertInContainer(
     "checklistAlertContainer",
     "✓ Checklist submitted successfully!",
     "success"
   );
+
+  // Reset state
+  appState.isUpdating = false;
+  appState.currentSubmission = null;
+  appState.pendingSubmissionData = null;
+
   setTimeout(() => backToDashboard(), 2000);
 }
 
@@ -266,6 +402,11 @@ function showHistoryView() {
     ).length;
     const totalCount = submission.items.length;
     const completedText = `${completedCount}/${totalCount}`;
+    const submissionCount = submission.submissionCount || 1;
+    const submissionBadge =
+      submissionCount > 1
+        ? ` <span style="background: #43e97b; color: white; padding: 2px 6px; border-radius: 8px; font-size: 10px; font-weight: 600;">v${submissionCount}</span>`
+        : "";
 
     // Extract only time from submittedAt
     const timeOnly =
@@ -279,11 +420,16 @@ function showHistoryView() {
                       submission.checklistType === "opening"
                         ? "🌅 Opening"
                         : "🌙 Closing"
-                    }</td>
+                    }${submissionBadge}</td>
                     <td><span class="completed-badge">${completedText}</span></td>
-                    <td><button class="view-btn" onclick="viewTaskDetails(${
-                      submissions.length - index - 1
-                    })">View</button></td>
+                    <td>
+                      <button class="view-btn" onclick="viewTaskDetails(${
+                        submissions.length - index - 1
+                      })">View</button>
+                      <button class="view-btn" style="margin-left: 5px; background: #43e97b;" onclick="reopenForEdit(${
+                        submissions.length - index - 1
+                      })">Edit</button>
+                    </td>
                 `;
     tbody.appendChild(row);
   });
@@ -301,6 +447,31 @@ function viewTaskDetails(index) {
 
   const taskList = document.getElementById("modalTaskList");
   taskList.innerHTML = "";
+
+  // Show submission count and revision history if exists
+  if (submission.submissionCount && submission.submissionCount > 1) {
+    const revisionSection = document.createElement("div");
+    revisionSection.style.cssText =
+      "background: #f0f8ff; padding: 12px; border-radius: 8px; margin-bottom: 15px; border-left: 4px solid #43e97b;";
+
+    const revisionTitle = document.createElement("div");
+    revisionTitle.style.cssText =
+      "font-weight: 600; color: #333; margin-bottom: 8px;";
+    revisionTitle.textContent = `📝 Submission History (Version ${submission.submissionCount})`;
+    revisionSection.appendChild(revisionTitle);
+
+    if (submission.revisionHistory && submission.revisionHistory.length > 0) {
+      submission.revisionHistory.forEach((entry) => {
+        const entryDiv = document.createElement("div");
+        entryDiv.style.cssText =
+          "font-size: 12px; color: #666; margin-top: 5px; padding-left: 10px;";
+        entryDiv.textContent = entry;
+        revisionSection.appendChild(entryDiv);
+      });
+    }
+
+    taskList.appendChild(revisionSection);
+  }
 
   submission.items.forEach((item, idx) => {
     const taskDiv = document.createElement("div");
@@ -345,6 +516,60 @@ function closeTaskModal() {
   document.getElementById("taskModal").classList.remove("show");
 }
 
+function reopenForEdit(index) {
+  const submissions = JSON.parse(
+    localStorage.getItem("checklistSubmissions") || "[]"
+  );
+  const submission = submissions[index];
+
+  // Set up for editing
+  appState.currentSubmission = submission;
+  appState.isUpdating = true;
+  appState.checklistType = submission.checklistType;
+
+  // Navigate to checklist view
+  showView("checklistView");
+  document.getElementById("checklistTitle").textContent =
+    submission.checklistType === "opening"
+      ? "Opening Checklist"
+      : "Closing Checklist";
+  document.getElementById("checklistDate").textContent =
+    new Date().toLocaleDateString("en-IN", {
+      weekday: "long",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    });
+  document.getElementById("checklistUser").textContent = appState.user;
+  document.getElementById("checklistTime").textContent = formatTime(
+    appState.loginTime
+  );
+
+  renderChecklist();
+
+  // Show indicator
+  const alertMsg = `📝 Editing submission from ${submission.date} (Version #${submission.submissionCount})`;
+  showAlertInContainer("checklistAlertContainer", alertMsg, "success");
+}
+
+function closeUpdateReasonModal() {
+  document.getElementById("updateReasonModal").classList.remove("show");
+  document.getElementById("updateReasonText").value = "";
+  clearError("updateReasonError");
+}
+
+function confirmUpdateReason() {
+  const reason = document.getElementById("updateReasonText").value.trim();
+
+  if (!reason) {
+    showError("updateReasonError", "Please provide a reason for this update");
+    return;
+  }
+
+  closeUpdateReasonModal();
+  performSubmission(reason);
+}
+
 function showVerifyView(type) {
   if (type) appState.verifyType = type;
   showView("verifyView");
@@ -363,7 +588,10 @@ function showVerifyView(type) {
   const selectedType = appState.verifyType || "opening";
   let selectedIndex = -1;
   for (let i = submissions.length - 1; i >= 0; i--) {
-    if (submissions[i].checklistType === selectedType) { selectedIndex = i; break; }
+    if (submissions[i].checklistType === selectedType) {
+      selectedIndex = i;
+      break;
+    }
   }
 
   container.innerHTML = "";
@@ -372,13 +600,23 @@ function showVerifyView(type) {
   const toggle = document.createElement("div");
   toggle.className = "toggle-group";
   const openBtn = document.createElement("button");
-  openBtn.className = `toggle-btn ${selectedType === "opening" ? "active" : ""}`;
+  openBtn.className = `toggle-btn ${
+    selectedType === "opening" ? "active" : ""
+  }`;
   openBtn.textContent = "Show Opening";
-  openBtn.onclick = () => { appState.verifyType = "opening"; showVerifyView(); };
+  openBtn.onclick = () => {
+    appState.verifyType = "opening";
+    showVerifyView();
+  };
   const closeBtn = document.createElement("button");
-  closeBtn.className = `toggle-btn ${selectedType === "closing" ? "active" : ""}`;
+  closeBtn.className = `toggle-btn ${
+    selectedType === "closing" ? "active" : ""
+  }`;
   closeBtn.textContent = "Show Closing";
-  closeBtn.onclick = () => { appState.verifyType = "closing"; showVerifyView(); };
+  closeBtn.onclick = () => {
+    appState.verifyType = "closing";
+    showVerifyView();
+  };
   toggle.appendChild(openBtn);
   toggle.appendChild(closeBtn);
   container.appendChild(toggle);
@@ -460,8 +698,7 @@ function showVerifyView(type) {
   const submitBtn = document.createElement("button");
   submitBtn.className = "button button-primary";
   submitBtn.textContent = "Confirm Verification";
-  submitBtn.onclick = () =>
-    submitVerification(lastSubmission, selectedIndex);
+  submitBtn.onclick = () => submitVerification(lastSubmission, selectedIndex);
 
   buttonGroup.appendChild(submitBtn);
   section.appendChild(buttonGroup);
@@ -485,10 +722,10 @@ function submitVerification(submission, index) {
   submission.verifiedAt = new Date().toLocaleString("en-IN");
   submissions[index] = submission;
   localStorage.setItem("checklistSubmissions", JSON.stringify(submissions));
-  
+
   // Auto-sync verification to Google Sheets
   syncSingleSubmissionToSheets(submission, true);
-  
+
   showAlertInContainer(
     "verificationAlertContainer",
     "✓ Verification completed!",
@@ -498,24 +735,33 @@ function submitVerification(submission, index) {
 }
 
 // AUTO-SYNC FUNCTION
-function syncSingleSubmissionToSheets(submission, isVerification = false) {
+function syncSingleSubmissionToSheets(
+  submission,
+  isVerification = false,
+  isUpdate = false
+) {
   const scriptUrl = localStorage.getItem("googleScriptUrl");
-  
+
   if (!scriptUrl) {
     console.warn("Google Sheets not configured. Data saved locally only.");
     return;
   }
 
   const completedCount = submission.items.filter((item) => item.checked).length;
-  
+
   // Prepare detailed task data for the sheet
-  const taskDetails = submission.items.map(item => ({
+  const taskDetails = submission.items.map((item) => ({
     taskName: item.task,
     status: item.checked ? "Done" : "Not Done",
     remark: item.remark || "-",
     timestamp: item.timestamp || "-",
-    supervisorVerified: item.supervisorVerified !== undefined ? (item.supervisorVerified ? "Verified" : "Not Verified") : "-",
-    supervisorRemark: item.supervisorRemark || "-"
+    supervisorVerified:
+      item.supervisorVerified !== undefined
+        ? item.supervisorVerified
+          ? "Verified"
+          : "Not Verified"
+        : "-",
+    supervisorRemark: item.supervisorRemark || "-",
   }));
 
   const payload = {
@@ -531,7 +777,10 @@ function syncSingleSubmissionToSheets(submission, isVerification = false) {
     supervisorReview: submission.supervisorReview || false,
     supervisor: submission.supervisor || "-",
     verifiedAt: submission.verifiedAt || "-",
-    isVerification: isVerification
+    submissionCount: submission.submissionCount || 1,
+    revisionHistory: submission.revisionHistory || [],
+    isVerification: isVerification,
+    isUpdate: isUpdate,
   };
 
   fetch(scriptUrl, {
@@ -552,7 +801,9 @@ function syncSingleSubmissionToSheets(submission, isVerification = false) {
 
 // EXPORT FUNCTIONS
 function exportToCSV() {
-  const submissions = JSON.parse(localStorage.getItem("checklistSubmissions") || "[]");
+  const submissions = JSON.parse(
+    localStorage.getItem("checklistSubmissions") || "[]"
+  );
   if (submissions.length === 0) {
     alert("No data to export");
     return;
@@ -568,23 +819,29 @@ function exportToCSV() {
     "Completed Tasks",
     "Total Tasks",
     "Login Time",
+    "Submission Count",
+    "Revision History",
     "Task Name",
     "Status",
     "Remarks",
     "Task Timestamp",
     "Verified By",
-    "Verified Time"
+    "Verified Time",
   ];
 
   let csvContent = "data:text/csv;charset=utf-8," + headers.join(",") + "\n";
 
   // ✅ Generate identical rows to Google Sheet
   submissions.forEach((submission) => {
-    const completedCount = submission.items.filter((item) => item.checked).length;
+    const completedCount = submission.items.filter(
+      (item) => item.checked
+    ).length;
     const timeOnly =
       submission.submittedAt && submission.submittedAt.includes(",")
         ? submission.submittedAt.split(",")[1].trim()
         : submission.submittedAt || "";
+
+    const revisionHistoryText = (submission.revisionHistory || []).join(" | ");
 
     submission.items.forEach((item) => {
       const row = [
@@ -596,13 +853,17 @@ function exportToCSV() {
         completedCount || "",
         submission.items.length || "",
         submission.loginTime || "",
+        submission.submissionCount || 1,
+        revisionHistoryText,
         item.task || "",
         item.checked ? "Done" : "Not Done",
         (item.remark || "").replace(/[\n\r]/g, " "), // strip newlines
         item.timestamp || "",
         submission.supervisor || "", // verified by
-        submission.verifiedAt || "" // verified time
-      ].map((v) => `"${v}"`).join(",");
+        submission.verifiedAt || "", // verified time
+      ]
+        .map((v) => `"${v}"`)
+        .join(",");
 
       csvContent += row + "\n";
     });
@@ -612,7 +873,10 @@ function exportToCSV() {
   const encodedUri = encodeURI(csvContent);
   const link = document.createElement("a");
   link.setAttribute("href", encodedUri);
-  link.setAttribute("download", `Checklist_Report_${new Date().toISOString().split("T")[0]}.csv`);
+  link.setAttribute(
+    "download",
+    `Checklist_Report_${new Date().toISOString().split("T")[0]}.csv`
+  );
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
@@ -700,6 +964,9 @@ Object.assign(window, {
   showHistoryView,
   viewTaskDetails,
   closeTaskModal,
+  closeUpdateReasonModal,
+  confirmUpdateReason,
+  reopenForEdit,
   showVerifyView,
   submitVerification,
   exportToCSV,
@@ -729,7 +996,13 @@ function updateLastView(viewId) {
     if (viewId === "verifyView") s.checklistType = appState.verifyType;
     localStorage.setItem(SESSION_KEY, JSON.stringify(s));
     // Also reflect in URL hash to survive reloads reliably
-    const hash = `view=${viewId}` + (viewId === "checklistView" ? `&type=${appState.checklistType}` : (viewId === "verifyView" ? `&type=${appState.verifyType}` : ""));
+    const hash =
+      `view=${viewId}` +
+      (viewId === "checklistView"
+        ? `&type=${appState.checklistType}`
+        : viewId === "verifyView"
+        ? `&type=${appState.verifyType}`
+        : "");
     if (location.hash !== `#${hash}`) location.replace(`#${hash}`);
   } catch (_) {}
 }
@@ -737,10 +1010,14 @@ function updateLastView(viewId) {
 function restoreSession() {
   try {
     const raw = localStorage.getItem(SESSION_KEY);
-    if (!raw) return; 
+    if (!raw) return;
     const session = JSON.parse(raw);
-    const expired = Date.now() - (session.lastActiveAt || 0) > INACTIVITY_LIMIT_MS;
-    if (expired) { localStorage.removeItem(SESSION_KEY); return; }
+    const expired =
+      Date.now() - (session.lastActiveAt || 0) > INACTIVITY_LIMIT_MS;
+    if (expired) {
+      localStorage.removeItem(SESSION_KEY);
+      return;
+    }
 
     appState.user = session.user;
     appState.role = session.role;
@@ -783,7 +1060,9 @@ function getHashState() {
     const view = q.get("view") || undefined;
     const type = q.get("type") || undefined;
     return { view, type };
-  } catch (_) { return {}; }
+  } catch (_) {
+    return {};
+  }
 }
 
 function updateActivity() {
@@ -799,7 +1078,7 @@ function updateActivity() {
 
 function attachActivityListeners() {
   const handler = throttle(updateActivity, 30000); // write at most every 30s
-  ["click","keydown","mousemove","touchstart","scroll"].forEach(evt => {
+  ["click", "keydown", "mousemove", "touchstart", "scroll"].forEach((evt) => {
     window.addEventListener(evt, handler, { passive: true });
   });
   setInterval(() => {
@@ -815,20 +1094,30 @@ function attachActivityListeners() {
 }
 
 function throttle(fn, interval) {
-  let last = 0; let timer = null;
-  return function() {
+  let last = 0;
+  let timer = null;
+  return function () {
     const now = Date.now();
-    if (now - last >= interval) { last = now; fn(); }
-    else if (!timer) {
-      timer = setTimeout(() => { last = Date.now(); timer = null; fn(); }, interval - (now - last));
+    if (now - last >= interval) {
+      last = now;
+      fn();
+    } else if (!timer) {
+      timer = setTimeout(() => {
+        last = Date.now();
+        timer = null;
+        fn();
+      }, interval - (now - last));
     }
   };
 }
 
 // Boot after DOM is ready
 (function boot() {
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => { restoreSession(); attachActivityListeners(); });
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", () => {
+      restoreSession();
+      attachActivityListeners();
+    });
   } else {
     restoreSession();
     attachActivityListeners();

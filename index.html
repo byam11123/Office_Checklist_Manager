@@ -247,6 +247,29 @@
       </div>
     </div>
 
+    <!-- MODAL FOR UPDATE REASON -->
+    <div id="updateReasonModal" class="modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>Reason for Update</h2>
+          <button class="close-btn" onclick="closeUpdateReasonModal()">×</button>
+        </div>
+        <div style="margin-bottom: 20px;">
+          <p style="color: #666; margin-bottom: 15px;">You are updating an existing submission. Please provide a reason for this update (like a commit message):</p>
+          <textarea 
+            id="updateReasonText" 
+            placeholder="e.g., Added missing camera check, Corrected closing time, Updated remarks"
+            style="width: 100%; min-height: 100px; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px; font-family: inherit; font-size: 14px;"
+          ></textarea>
+          <div id="updateReasonError" class="error-message"></div>
+        </div>
+        <div class="modal-button-group">
+          <button class="button button-secondary" onclick="closeUpdateReasonModal()">Cancel</button>
+          <button class="button button-primary" onclick="confirmUpdateReason()">Confirm Update</button>
+        </div>
+      </div>
+    </div>
+
     
    <script type="module" src="/src/main.js"></script>
     

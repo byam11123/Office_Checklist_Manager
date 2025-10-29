@@ -26,12 +26,16 @@ function doPost(e) {
     setupSummaryHeaders(summarySheet);
     setupDetailsHeaders(detailsSheet);
     
-    if (data.isVerification) {
+    if (data.isUpdate || data.isVerification) {
       // Update existing rows instead of appending new ones
       var updated = false;
       try {
-        updated = updateSummaryVerification(summarySheet, data);
-        updateDetailsVerification(detailsSheet, data);
+        updated = updateExistingSubmission(summarySheet, detailsSheet, data);
+        if (!updated) {
+          // Fallback: append if not found
+          addSummaryRow(summarySheet, data);
+          addDetailedRows(detailsSheet, data);
+        }
       } catch (updateErr) {
         // If anything goes wrong, fall back to append to avoid data loss
         addSummaryRow(summarySheet, data);
@@ -76,6 +80,8 @@ function setupSummaryHeaders(sheet) {
       "Total Tasks",
       "Completion %",
       "Login Time",
+      "Submission Count",
+      "Revision History",
       "Supervisor Review",
       "Supervisor Name",
       "Verified At"
@@ -118,6 +124,7 @@ function setupDetailsHeaders(sheet) {
 
 function addSummaryRow(sheet, data) {
   var completionPercent = ((data.completedCount / data.totalCount) * 100).toFixed(1) + "%";
+  var revisionHistoryText = (data.revisionHistory || []).join(" | ");
   
   var row = [
     data.date,
@@ -129,6 +136,8 @@ function addSummaryRow(sheet, data) {
     data.totalCount,
     completionPercent,
     data.loginTime,
+    data.submissionCount || 1,
+    revisionHistoryText,
     data.supervisorReview ? "Yes" : "No",
     data.supervisor,
     data.verifiedAt
@@ -199,6 +208,83 @@ function addDetailedRows(sheet, data) {
   
   // Auto-resize columns
   sheet.autoResizeColumns(1, 10);
+}
+
+// Unified function to update existing submission (for both updates and verifications)
+function updateExistingSubmission(summarySheet, detailsSheet, data) {
+  // Find and update in Summary sheet
+  var dateCol = 1;
+  var userCol = 3;
+  var typeCol = 5;
+  var lastRow = summarySheet.getLastRow();
+  
+  if (lastRow < 2) return false;
+  
+  var range = summarySheet.getRange(2, 1, lastRow - 1, 5);
+  var values = range.getValues();
+  
+  for (var i = 0; i < values.length; i++) {
+    var row = values[i];
+    if (row[0] === data.date && row[2] === data.user && row[4] === data.checklistType) {
+      var rowIndex = i + 2;
+      var completionPercent = ((data.completedCount / data.totalCount) * 100).toFixed(1) + "%";
+      var revisionHistoryText = (data.revisionHistory || []).join(" | ");
+      
+      // Update all relevant columns
+      summarySheet.getRange(rowIndex, 2).setValue(data.submittedAt);
+      summarySheet.getRange(rowIndex, 6).setValue(data.completedCount);
+      summarySheet.getRange(rowIndex, 7).setValue(data.totalCount);
+      summarySheet.getRange(rowIndex, 8).setValue(completionPercent);
+      summarySheet.getRange(rowIndex, 10).setValue(data.submissionCount || 1);
+      summarySheet.getRange(rowIndex, 11).setValue(revisionHistoryText);
+      summarySheet.getRange(rowIndex, 12).setValue(data.supervisorReview ? "Yes" : "No");
+      summarySheet.getRange(rowIndex, 13).setValue(data.supervisor || "-");
+      summarySheet.getRange(rowIndex, 14).setValue(data.verifiedAt || "-");
+      
+      // Color code completion percentage
+      var percentCell = summarySheet.getRange(rowIndex, 8);
+      var percent = parseFloat(completionPercent);
+      if (percent === 100) {
+        percentCell.setBackground("#D4EDDA").setFontColor("#155724");
+      } else if (percent >= 80) {
+        percentCell.setBackground("#FFF3CD").setFontColor("#856404");
+      } else {
+        percentCell.setBackground("#F8D7DA").setFontColor("#721C24");
+      }
+      
+      // Update Task Details sheet - delete old rows and add new ones
+      updateTaskDetails(detailsSheet, data);
+      
+      return true;
+    }
+  }
+  
+  return false;
+}
+
+function updateTaskDetails(sheet, data) {
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return;
+  
+  // Find and delete existing task rows for this submission
+  var range = sheet.getRange(2, 1, lastRow - 1, 4);
+  var values = range.getValues();
+  var rowsToDelete = [];
+  
+  for (var i = values.length - 1; i >= 0; i--) {
+    var row = values[i];
+    if (row[0] === data.date && row[2] === data.user && row[3] === data.checklistType) {
+      rowsToDelete.push(i + 2); // +2 for header row and 0-index
+    }
+  }
+  
+  // Delete rows from bottom to top to maintain indices
+  for (var j = 0; j < rowsToDelete.length; j++) {
+    sheet.deleteRow(rowsToDelete[j]);
+  }
+  
+  // Add new task rows
+  addDetailedRows(sheet, data);
 }
 
 // Update supervisor verification in Summary sheet (columns 10-12) for an existing submission
